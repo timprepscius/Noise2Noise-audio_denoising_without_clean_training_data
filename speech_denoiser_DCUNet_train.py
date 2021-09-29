@@ -77,6 +77,8 @@ os.makedirs(basepath,exist_ok=True)
 os.makedirs(basepath+"/Weights",exist_ok=True)
 os.makedirs(basepath+"/Samples",exist_ok=True)
 
+import sys
+
 # + colab={} colab_type="code" id="D0bWtt2J5i9F"
 import time
 import pickle
@@ -94,13 +96,16 @@ import torch
 import torch.nn as nn
 import torchaudio
 
+import datasets
+import dataset_noise_models
+
 from tqdm import tqdm, tqdm_notebook
 from torch.utils.data import Dataset, DataLoader
 from matplotlib import colors, pyplot as plt
 from pypesq import pesq
 from IPython.display import clear_output
 
-%matplotlib inline
+# %matplotlib inline
 
 # not everything is smooth in sklearn, to conveniently output images in colab
 # we will ignore warnings
@@ -129,7 +134,7 @@ else:
 DEVICE = torch.device('cuda' if train_on_gpu else 'cpu')
 
 # + colab={"base_uri": "https://localhost:8080/", "height": 50} colab_type="code" id="qacrfNwA6vw_" outputId="e1183ab5-4f39-478a-b00a-74fe5edfb511"
-!nvidia-smi
+# !nvidia-smi
 
 # + [markdown] colab={} colab_type="code" id="_N4AFJANDcBG"
 # ### Set Audio backend as Soundfile for windows and Sox for Linux ###
@@ -150,77 +155,34 @@ HOP_LENGTH = (SAMPLE_RATE * 16) // 1000
 # + [markdown] colab_type="text" id="x8suREWkb5Se"
 # ### The declaration of datasets and dataloaders ###
 
-# + colab={} colab_type="code" id="cZ0wb9EN5i9f"
-class SpeechDataset(Dataset):
-    """
-    A dataset class with audio that cuts them/paddes them to a specified length, applies a Short-tome Fourier transform,
-    normalizes and leads to a tensor.
-    """
-    def __init__(self, noisy_files, clean_files, n_fft=64, hop_length=16):
-        super().__init__()
-        # list of files
-        self.noisy_files = sorted(noisy_files)
-        self.clean_files = sorted(clean_files)
-        
-        # stft parameters
-        self.n_fft = n_fft
-        self.hop_length = hop_length
-        
-        self.len_ = len(self.noisy_files)
-        
-        # fixed len
-        self.max_len = 165000
+# test_dataset = datasets.getDataset("speech", { "source_dir": TRAIN_INPUT_DIR, "target_dir": TRAIN_TARGET_DIR, "fft_window": N_FFT, "fft_step": HOP_LENGTH });
+# train_dataset = datasets.getDataset("speech", { "source_dir": TEST_NOISY_DIR, "target_dir": TEST_CLEAN_DIR, "fft_window": N_FFT, "fft_step": HOP_LENGTH });
 
-    
-    def __len__(self):
-        return self.len_
-      
-    def load_sample(self, file):
-        waveform, _ = torchaudio.load(file)
-        return waveform
-  
-    def __getitem__(self, index):
-        # load to tensors and normalization
-        x_clean = self.load_sample(self.clean_files[index])
-        x_noisy = self.load_sample(self.noisy_files[index])
-        
-        # padding/cutting
-        x_clean = self._prepare_sample(x_clean)
-        x_noisy = self._prepare_sample(x_noisy)
-        
-        # Short-time Fourier transform
-        x_noisy_stft = torch.stft(input=x_noisy, n_fft=self.n_fft, 
-                                  hop_length=self.hop_length, normalized=True)
-        x_clean_stft = torch.stft(input=x_clean, n_fft=self.n_fft, 
-                                  hop_length=self.hop_length, normalized=True)
-        
-        return x_noisy_stft, x_clean_stft
-        
-    def _prepare_sample(self, waveform):
-        waveform = waveform.numpy()
-        current_len = waveform.shape[1]
-        
-        output = np.zeros((1, self.max_len), dtype='float32')
-        output[0, -current_len:] = waveform[0, :self.max_len]
-        output = torch.from_numpy(output)
-        
-        return output
+# PREFIX_DIR = "/Users/tprepscius/Projects/denoise/madhavmk3/Noise2Noise-audio_denoising_without_clean_training_data"
+PREFIX_DIR = "./"
+CLEAN_INPUT_DIR = f"{PREFIX_DIR}/Datasets/clean"
+NOISE_INPUT_DIR = f"{PREFIX_DIR}/Datasets/noise"
 
-# + colab={} colab_type="code" id="8NLV2lcv5i9k"
-train_input_files = sorted(list(TRAIN_INPUT_DIR.rglob('*.wav')))
-train_target_files = sorted(list(TRAIN_TARGET_DIR.rglob('*.wav')))
+test_dataset = datasets.getDataset("tjp-0", { 
+    "clean_dir": CLEAN_INPUT_DIR, 
+    "noise_dir": NOISE_INPUT_DIR, 
+    "image_size": (215, 2049),
+    "fft_window": N_FFT, "fft_step": HOP_LENGTH,
+    "source_noise_model": dataset_noise_models.additive_noise_model,
+    "target_noise_model": dataset_noise_models.clean_noise_model,
+    "snr": (0.5, 1.5),
+    "override_length": 100
+});
 
-test_noisy_files = sorted(list(TEST_NOISY_DIR.rglob('*.wav')))
-test_clean_files = sorted(list(TEST_CLEAN_DIR.rglob('*.wav')))
+train_dataset = datasets.getDataset("tjp-0", { 
+    "clean_dir": CLEAN_INPUT_DIR, 
+    "noise_dir": NOISE_INPUT_DIR, 
+    "image_size": (215, 2049),
+    "source_noise_model": dataset_noise_models.additive_noise_model,
+    "target_noise_model": dataset_noise_models.clean_noise_model,
+    "snr": (0.5, 1.5),
+});
 
-print("No. of Training files:",len(train_input_files))
-print("No. of Testing files:",len(test_noisy_files))
-
-# + colab={} colab_type="code" id="7GHaKjYS5i9u"
-test_dataset = SpeechDataset(test_noisy_files, test_clean_files, N_FFT, HOP_LENGTH)
-train_dataset = SpeechDataset(train_input_files, train_target_files, N_FFT, HOP_LENGTH)
-
-# + colab={} colab_type="code" id="79nIQjht5i9y"
 test_loader = DataLoader(test_dataset, batch_size=1, shuffle=True)
 train_loader = DataLoader(train_dataset, batch_size=2, shuffle=True)
 
@@ -567,6 +529,8 @@ def train_epoch(net, train_loader, loss_fn, optimizer):
     net.train()
     train_ep_loss = 0.
     counter = 0
+    total = len(train_loader)
+
     for noisy_x, clean_x in train_loader:
 
         noisy_x, clean_x = noisy_x.to(DEVICE), clean_x.to(DEVICE)
@@ -584,6 +548,10 @@ def train_epoch(net, train_loader, loss_fn, optimizer):
 
         train_ep_loss += loss.item() 
         counter += 1
+
+        sys.stdout.write('\r')
+        sys.stdout.write(f"[{counter}/{total}]")
+        sys.stdout.flush()
 
     train_ep_loss /= counter
 
@@ -881,6 +849,11 @@ dcunet20 = DCUnet20(N_FFT, HOP_LENGTH).to(DEVICE)
 optimizer = torch.optim.Adam(dcunet20.parameters())
 loss_fn = wsdr_fn
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.1)
+
+# +
+
+print(dcunet20)
+print(f"using input shape: {train_dataset[0][0].shape}")
 
 # +
 # specify paths and uncomment to resume training from a given point
