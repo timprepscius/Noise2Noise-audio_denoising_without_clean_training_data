@@ -98,6 +98,7 @@ import torchaudio
 
 import datasets
 import dataset_noise_models
+import model_dcu20
 
 from tqdm import tqdm, tqdm_notebook
 from torch.utils.data import Dataset, DataLoader
@@ -158,10 +159,12 @@ HOP_LENGTH = (SAMPLE_RATE * 16) // 1000
 # test_dataset = datasets.getDataset("speech", { "source_dir": TRAIN_INPUT_DIR, "target_dir": TRAIN_TARGET_DIR, "fft_window": N_FFT, "fft_step": HOP_LENGTH });
 # train_dataset = datasets.getDataset("speech", { "source_dir": TEST_NOISY_DIR, "target_dir": TEST_CLEAN_DIR, "fft_window": N_FFT, "fft_step": HOP_LENGTH });
 
-# PREFIX_DIR = "/Users/tprepscius/Projects/denoise/madhavmk3/Noise2Noise-audio_denoising_without_clean_training_data"
-PREFIX_DIR = "./"
+PREFIX_DIR = "/Users/tprepscius/Projects/denoise/madhavmk3/Noise2Noise-audio_denoising_without_clean_training_data"
+# PREFIX_DIR = "./"
 CLEAN_INPUT_DIR = f"{PREFIX_DIR}/Datasets/clean"
 NOISE_INPUT_DIR = f"{PREFIX_DIR}/Datasets/noise"
+
+complex = True
 
 test_dataset = datasets.getDataset("tjp-0", { 
     "clean_dir": CLEAN_INPUT_DIR, 
@@ -171,7 +174,8 @@ test_dataset = datasets.getDataset("tjp-0", {
     "source_noise_model": dataset_noise_models.additive_noise_model,
     "target_noise_model": dataset_noise_models.clean_noise_model,
     "snr": (0.5, 1.5),
-    "override_length": 100
+    "override_length": 8*16,
+    "complex": complex
 });
 
 train_dataset = datasets.getDataset("tjp-0", { 
@@ -181,6 +185,8 @@ train_dataset = datasets.getDataset("tjp-0", {
     "source_noise_model": dataset_noise_models.additive_noise_model,
     "target_noise_model": dataset_noise_models.clean_noise_model,
     "snr": (0.5, 1.5),
+    "complex": complex,
+    # "override_length": 2
 });
 
 test_loader = DataLoader(test_dataset, batch_size=1, shuffle=True)
@@ -188,226 +194,6 @@ train_loader = DataLoader(train_dataset, batch_size=2, shuffle=True)
 
 # For testing purpose
 test_loader_single_unshuffled = DataLoader(test_dataset, batch_size=1, shuffle=False)
-
-
-# + [markdown] colab_type="text" id="tHJZXeUQcsrq"
-# ### Average Test Set Metrics ###
-# -
-
-def test_set_metrics(test_loader, model):
-    metric_names = ["CSIG","CBAK","COVL","PESQ","SSNR","STOI"]
-    overall_metrics = [[] for i in range(len(metric_names))]
-    
-    for i,(noisy,clean) in enumerate(test_loader):
-        x_est = model(noisy.to(DEVICE), is_istft=True)
-        x_est_np = x_est[0].view(-1).detach().cpu().numpy()
-        x_c_np = torch.istft(torch.squeeze(clean[0], 1), n_fft=N_FFT, hop_length=HOP_LENGTH, normalized=True).view(-1).detach().cpu().numpy()
-        metrics = AudioMetrics(x_c_np, x_est_np, SAMPLE_RATE)
-        
-        overall_metrics[0].append(metrics.CSIG)
-        overall_metrics[1].append(metrics.CBAK)
-        overall_metrics[2].append(metrics.COVL)
-        overall_metrics[3].append(metrics.PESQ)
-        overall_metrics[4].append(metrics.SSNR)
-        overall_metrics[5].append(metrics.STOI)
-    
-    metrics_dict = dict()
-    for i in range(len(metric_names)):
-        metrics_dict[metric_names[i]] ={'mean': np.mean(overall_metrics[i]), 'std_dev': np.std(overall_metrics[i])} 
-    
-    return metrics_dict
-
-
-# + [markdown] colab_type="text" id="k73YEkgQCOTj"
-# ### Declaring the class layers ###
-
-# + colab={} colab_type="code" id="Znx7QM3h5i92"
-class CConv2d(nn.Module):
-    """
-    Class of complex valued convolutional layer
-    """
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0):
-        super().__init__()
-        
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.kernel_size = kernel_size
-        self.padding = padding
-        self.stride = stride
-        
-        self.real_conv = nn.Conv2d(in_channels=self.in_channels, 
-                                   out_channels=self.out_channels, 
-                                   kernel_size=self.kernel_size, 
-                                   padding=self.padding, 
-                                   stride=self.stride)
-        
-        self.im_conv = nn.Conv2d(in_channels=self.in_channels, 
-                                 out_channels=self.out_channels, 
-                                 kernel_size=self.kernel_size, 
-                                 padding=self.padding, 
-                                 stride=self.stride)
-        
-        # Glorot initialization.
-        nn.init.xavier_uniform_(self.real_conv.weight)
-        nn.init.xavier_uniform_(self.im_conv.weight)
-        
-        
-    def forward(self, x):
-        x_real = x[..., 0]
-        x_im = x[..., 1]
-        
-        c_real = self.real_conv(x_real) - self.im_conv(x_im)
-        c_im = self.im_conv(x_real) + self.real_conv(x_im)
-        
-        output = torch.stack([c_real, c_im], dim=-1)
-        return output
-
-
-# + colab={} colab_type="code" id="GgtxJbSQ5i96"
-class CConvTranspose2d(nn.Module):
-    """
-      Class of complex valued dilation convolutional layer
-    """
-    def __init__(self, in_channels, out_channels, kernel_size, stride, output_padding=0, padding=0):
-        super().__init__()
-        
-        self.in_channels = in_channels
-
-        self.out_channels = out_channels
-        self.kernel_size = kernel_size
-        self.output_padding = output_padding
-        self.padding = padding
-        self.stride = stride
-        
-        self.real_convt = nn.ConvTranspose2d(in_channels=self.in_channels, 
-                                            out_channels=self.out_channels, 
-                                            kernel_size=self.kernel_size, 
-                                            output_padding=self.output_padding,
-                                            padding=self.padding,
-                                            stride=self.stride)
-        
-        self.im_convt = nn.ConvTranspose2d(in_channels=self.in_channels, 
-                                            out_channels=self.out_channels, 
-                                            kernel_size=self.kernel_size, 
-                                            output_padding=self.output_padding, 
-                                            padding=self.padding,
-                                            stride=self.stride)
-        
-        
-        # Glorot initialization.
-        nn.init.xavier_uniform_(self.real_convt.weight)
-        nn.init.xavier_uniform_(self.im_convt.weight)
-        
-        
-    def forward(self, x):
-        x_real = x[..., 0]
-        x_im = x[..., 1]
-        
-        ct_real = self.real_convt(x_real) - self.im_convt(x_im)
-        ct_im = self.im_convt(x_real) + self.real_convt(x_im)
-        
-        output = torch.stack([ct_real, ct_im], dim=-1)
-        return output
-
-
-# + colab={} colab_type="code" id="OJSmVrxp5i9-"
-class CBatchNorm2d(nn.Module):
-    """
-    Class of complex valued batch normalization layer
-    """
-    def __init__(self, num_features, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True):
-        super().__init__()
-        
-        self.num_features = num_features
-        self.eps = eps
-        self.momentum = momentum
-        self.affine = affine
-        self.track_running_stats = track_running_stats
-        
-        self.real_b = nn.BatchNorm2d(num_features=self.num_features, eps=self.eps, momentum=self.momentum,
-                                      affine=self.affine, track_running_stats=self.track_running_stats)
-        self.im_b = nn.BatchNorm2d(num_features=self.num_features, eps=self.eps, momentum=self.momentum,
-                                    affine=self.affine, track_running_stats=self.track_running_stats) 
-        
-    def forward(self, x):
-        x_real = x[..., 0]
-        x_im = x[..., 1]
-        
-        n_real = self.real_b(x_real)
-        n_im = self.im_b(x_im)  
-        
-        output = torch.stack([n_real, n_im], dim=-1)
-        return output
-
-
-# + colab={} colab_type="code" id="N7W37XMO5i-B"
-class Encoder(nn.Module):
-    """
-    Class of upsample block
-    """
-    def __init__(self, filter_size=(7,5), stride_size=(2,2), in_channels=1, out_channels=45, padding=(0,0)):
-        super().__init__()
-        
-        self.filter_size = filter_size
-        self.stride_size = stride_size
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.padding = padding
-
-        self.cconv = CConv2d(in_channels=self.in_channels, out_channels=self.out_channels, 
-                             kernel_size=self.filter_size, stride=self.stride_size, padding=self.padding)
-        
-        self.cbn = CBatchNorm2d(num_features=self.out_channels) 
-        
-        self.leaky_relu = nn.LeakyReLU()
-            
-    def forward(self, x):
-        
-        conved = self.cconv(x)
-        normed = self.cbn(conved)
-        acted = self.leaky_relu(normed)
-        
-        return acted
-
-
-# + colab={} colab_type="code" id="fuugYDZs5i-G"
-class Decoder(nn.Module):
-    """
-    Class of downsample block
-    """
-    def __init__(self, filter_size=(7,5), stride_size=(2,2), in_channels=1, out_channels=45,
-                 output_padding=(0,0), padding=(0,0), last_layer=False):
-        super().__init__()
-        
-        self.filter_size = filter_size
-        self.stride_size = stride_size
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.output_padding = output_padding
-        self.padding = padding
-        
-        self.last_layer = last_layer
-        
-        self.cconvt = CConvTranspose2d(in_channels=self.in_channels, out_channels=self.out_channels, 
-                             kernel_size=self.filter_size, stride=self.stride_size, output_padding=self.output_padding, padding=self.padding)
-        
-        self.cbn = CBatchNorm2d(num_features=self.out_channels) 
-        
-        self.leaky_relu = nn.LeakyReLU()
-            
-    def forward(self, x):
-        
-        conved = self.cconvt(x)
-        
-        if not self.last_layer:
-            normed = self.cbn(conved)
-            output = self.leaky_relu(normed)
-        else:
-            m_phase = conved / (torch.abs(conved) + 1e-8)
-            m_mag = torch.tanh(torch.abs(conved))
-            output = m_phase * m_mag
-            
-        return output
 
 
 # + [markdown] colab_type="text" id="3G5CqR3-COT8"
@@ -428,15 +214,33 @@ def resample(original, old_rate, new_rate):
     else:
         return original
 
+def istft_complex(v):
+    v = torch.squeeze(v, 1)
+    v = torch.istft(v, n_fft=N_FFT, hop_length=HOP_LENGTH, normalized=True)
+    return v
 
-def wsdr_fn(x_, y_pred_, y_true_, eps=1e-8):
+def istft_magnitude(v):
+    pass
+
+def wsdr_fn(istft_func, x_, y_pred_, y_true_, eps=1e-8):
     # to time-domain waveform
-    y_true_ = torch.squeeze(y_true_, 1)
-    y_true = torch.istft(y_true_, n_fft=N_FFT, hop_length=HOP_LENGTH, normalized=True)
-    x_ = torch.squeeze(x_, 1)
-    x = torch.istft(x_, n_fft=N_FFT, hop_length=HOP_LENGTH, normalized=True)
+    print(f"y_true_.shape {y_true_.shape}")
+    # y_true_ = torch.squeeze(y_true_, 1)
+    # y_true = torch.istft(y_true_, n_fft=N_FFT, hop_length=HOP_LENGTH, normalized=True)
+    y_true = istft_func(y_true_)
 
-    y_pred = y_pred_.flatten(1)
+    print(f"x_.shape {x_.shape}")
+    # x_ = torch.squeeze(x_, 1)
+    # x = torch.istft(x_, n_fft=N_FFT, hop_length=HOP_LENGTH, normalized=True)
+    x = istft_func(x_)
+
+    print(f"y_pred_.shape {y_pred_.shape}")
+    # y_pred_ = torch.squeeze(y_pred_, 1)
+    # y_pred = torch.istft(y_pred_, n_fft=N_FFT, hop_length=HOP_LENGTH, normalized=True)
+    y_pred = istft_func(y_pred_)
+
+
+    y_pred = y_pred.flatten(1)
     y_true = y_true.flatten(1)
     x = x.flatten(1)
 
@@ -454,70 +258,64 @@ def wsdr_fn(x_, y_pred_, y_true_, eps=1e-8):
     wSDR = a * sdr_fn(y_true, y_pred) + (1 - a) * sdr_fn(z_true, z_pred)
     return torch.mean(wSDR)
 
-wonky_samples = []
-
-def getMetricsonLoader(loader, net, use_net=True):
+def getMetricsonLoader(loader, net):
     net.eval()
     # Original test metrics
     scale_factor = 32768
-    # metric_names = ["CSIG","CBAK","COVL","PESQ","SSNR","STOI","SNR "]
-    metric_names = ["PESQ-WB","PESQ-NB","SNR","SSNR","STOI"]
-    overall_metrics = [[] for i in range(5)]
+    metric_names = {}
+    overall_metrics = {}
+    total = len(loader)
     for i, data in enumerate(loader):
-        if (i+1)%10==0:
-            end_str = "\n"
-        else:
-            end_str = ","
-        #print(i,end=end_str)
-        if i in wonky_samples:
-            print("Something's up with this sample. Passing...")
-        else:
-            noisy = data[0]
-            clean = data[1]
-            if use_net: # Forward of net returns the istft version
-                x_est = net(noisy.to(DEVICE), is_istft=True)
-                x_est_np = x_est.view(-1).detach().cpu().numpy()
-            else:
-                x_est_np = torch.istft(torch.squeeze(noisy, 1), n_fft=N_FFT, hop_length=HOP_LENGTH, normalized=True).view(-1).detach().cpu().numpy()
-            x_clean_np = torch.istft(torch.squeeze(clean, 1), n_fft=N_FFT, hop_length=HOP_LENGTH, normalized=True).view(-1).detach().cpu().numpy()
+        noisy = data[0]
+        clean = data[1]
+
+        x_est_np = torch.istft(torch.squeeze(noisy, 1), n_fft=N_FFT, hop_length=HOP_LENGTH, normalized=True).view(-1).detach().cpu().numpy()
+        x_clean_np = torch.istft(torch.squeeze(clean, 1), n_fft=N_FFT, hop_length=HOP_LENGTH, normalized=True).view(-1).detach().cpu().numpy()
             
+        metrics = AudioMetrics2(x_clean_np, x_est_np, 48000)
         
-            metrics = AudioMetrics2(x_clean_np, x_est_np, 48000)
-            
-            ref_wb = resample(x_clean_np, 48000, 16000)
-            deg_wb = resample(x_est_np, 48000, 16000)
+        ref_wb = resample(x_clean_np, 48000, 16000)
+        deg_wb = resample(x_est_np, 48000, 16000)
+        pesq_wb = 0.0
+        try:
             pesq_wb = pesq(16000, ref_wb, deg_wb, 'wb')
-            
-            ref_nb = resample(x_clean_np, 48000, 8000)
-            deg_nb = resample(x_est_np, 48000, 8000)
+        except:
+            pass
+        
+        ref_nb = resample(x_clean_np, 48000, 8000)
+        deg_nb = resample(x_est_np, 48000, 8000)
+        pesq_nb = 0.0
+        try:
             pesq_nb = pesq(8000, ref_nb, deg_nb, 'nb')
+        except:
+            pass
 
-            #print(new_scores)
-            #print(metrics.PESQ, metrics.STOI)
+        #print(new_scores)
+        #print(metrics.PESQ, metrics.STOI)
 
-            overall_metrics[0].append(pesq_wb)
-            overall_metrics[1].append(pesq_nb)
-            overall_metrics[2].append(metrics.SNR)
-            overall_metrics[3].append(metrics.SSNR)
-            overall_metrics[4].append(metrics.STOI)
+        overall_metrics.setdefault("pesq_wb", []).append(pesq_wb)
+        overall_metrics.setdefault("pesq_nb", []).append(pesq_nb)
+        overall_metrics.setdefault("SNR", []).append(metrics.SNR)
+        overall_metrics.setdefault("SSNR", []).append(metrics.SSNR)
+        overall_metrics.setdefault("STOI", []).append(metrics.STOI)
+
+        print(f"[{i}/{total}]\r")
+
     print()
     print("Sample metrics computed")
     results = {}
-    for i in range(5):
+    for k, v in overall_metrics.items():
         temp = {}
-        temp["Mean"] =  np.mean(overall_metrics[i])
-        temp["STD"]  =  np.std(overall_metrics[i])
-        temp["Min"]  =  min(overall_metrics[i])
-        temp["Max"]  =  max(overall_metrics[i])
-        results[metric_names[i]] = temp
+        temp["Mean"] = np.mean(v)
+        temp["STD"] = np.std(v)
+        temp["Min"] = min(v)
+        temp["Max"] = max(v)
+        results[k] = temp
+        
     print("Averages computed")
-    if use_net:
-        addon = "(cleaned by model)"
-    else:
-        addon = "(pre denoising)"
     print("Metrics on test data",addon)
-    for i in range(5):
-        print("{} : {:.3f}+/-{:.3f}".format(metric_names[i], np.mean(overall_metrics[i]), np.std(overall_metrics[i])))
+    print(results)
+
     return results
 
 
@@ -565,7 +363,7 @@ def train_epoch(net, train_loader, loss_fn, optimizer):
 # ### Description of the validation of epochs ###
 
 # + colab={} colab_type="code" id="-JKrTMpPhw19"
-def test_epoch(net, test_loader, loss_fn, use_net=True):
+def test_epoch(net, test_loader, loss_fn):
     net.eval()
     test_ep_loss = 0.
     counter = 0.
@@ -587,7 +385,7 @@ def test_epoch(net, test_loader, loss_fn, use_net=True):
     
     #print("Actual compute done...testing now")
     
-    testmet = getMetricsonLoader(test_loader,net,use_net)
+    testmet = getMetricsonLoader(test_loader,net)
 
     # clear cache
     gc.collect()
@@ -623,14 +421,14 @@ def train(net, train_loader, test_loader, loss_fn, optimizer, scheduler, epochs)
                 f.write(str(testmet))
                 f.write("\n")
         
-        
+         
         train_loss = train_epoch(net, train_loader, loss_fn, optimizer)
         test_loss = 0
         scheduler.step()
         print("Saving model....")
         
         with torch.no_grad():
-            test_loss, testmet = test_epoch(net, test_loader, loss_fn,use_net=True)
+            test_loss, testmet = test_epoch(net, test_loader, loss_fn)
 
         train_losses.append(train_loss)
         test_losses.append(test_loss)
@@ -662,180 +460,6 @@ def train(net, train_loader, test_loader, loss_fn, optimizer, scheduler, epochs)
 # ### 20 Layer DCUNet Model ###
 
 # + colab={} colab_type="code" id="j8XCrVIg5i-K"
-class DCUnet20(nn.Module):
-    """
-    Deep Complex U-Net class of the model.
-    """
-    def __init__(self, n_fft=64, hop_length=16):
-        super().__init__()
-        
-        # for istft
-        self.n_fft = n_fft
-        self.hop_length = hop_length
-        
-        self.set_size(model_complexity=int(45//1.414), input_channels=1, model_depth=20)
-        self.encoders = []
-        self.model_length = 20 // 2
-        
-        for i in range(self.model_length):
-            module = Encoder(in_channels=self.enc_channels[i], out_channels=self.enc_channels[i + 1],
-                             filter_size=self.enc_kernel_sizes[i], stride_size=self.enc_strides[i], padding=self.enc_paddings[i])
-            self.add_module("encoder{}".format(i), module)
-            self.encoders.append(module)
-
-        self.decoders = []
-
-        for i in range(self.model_length):
-            if i != self.model_length - 1:
-                module = Decoder(in_channels=self.dec_channels[i] + self.enc_channels[self.model_length - i], out_channels=self.dec_channels[i + 1], 
-                                 filter_size=self.dec_kernel_sizes[i], stride_size=self.dec_strides[i], padding=self.dec_paddings[i],
-                                 output_padding=self.dec_output_padding[i])
-            else:
-                module = Decoder(in_channels=self.dec_channels[i] + self.enc_channels[self.model_length - i], out_channels=self.dec_channels[i + 1], 
-                                 filter_size=self.dec_kernel_sizes[i], stride_size=self.dec_strides[i], padding=self.dec_paddings[i],
-                                 output_padding=self.dec_output_padding[i], last_layer=True)
-            self.add_module("decoder{}".format(i), module)
-            self.decoders.append(module)
-       
-        
-    def forward(self, x, is_istft=True):
-        # print('x : ', x.shape)
-        orig_x = x
-        xs = []
-        for i, encoder in enumerate(self.encoders):
-            xs.append(x)
-            x = encoder(x)
-            # print('Encoder : ', x.shape)
-            
-        p = x
-        for i, decoder in enumerate(self.decoders):
-            p = decoder(p)
-            if i == self.model_length - 1:
-                break
-            # print('Decoder : ', p.shape)
-            p = torch.cat([p, xs[self.model_length - 1 - i]], dim=1)
-        
-        # u9 - the mask
-        
-        mask = p
-        
-        # print('mask : ', mask.shape)
-        
-        output = mask * orig_x
-        output = torch.squeeze(output, 1)
-
-
-        if is_istft:
-            output = torch.istft(output, n_fft=self.n_fft, hop_length=self.hop_length, normalized=True)
-        
-        return output
-
-    
-    def set_size(self, model_complexity, model_depth=20, input_channels=1):
-
-        if model_depth == 20:
-            self.enc_channels = [input_channels,
-                                 model_complexity,
-                                 model_complexity,
-                                 model_complexity * 2,
-                                 model_complexity * 2,
-                                 model_complexity * 2,
-                                 model_complexity * 2,
-                                 model_complexity * 2,
-                                 model_complexity * 2,
-                                 model_complexity * 2,
-                                 128]
-
-            self.enc_kernel_sizes = [(7, 1),
-                                     (1, 7),
-                                     (6, 4),
-                                     (7, 5),
-                                     (5, 3),
-                                     (5, 3),
-                                     (5, 3),
-                                     (5, 3),
-                                     (5, 3),
-                                     (5, 3)]
-
-            self.enc_strides = [(1, 1),
-                                (1, 1),
-                                (2, 2),
-                                (2, 1),
-                                (2, 2),
-                                (2, 1),
-                                (2, 2),
-                                (2, 1),
-                                (2, 2),
-                                (2, 1)]
-
-            self.enc_paddings = [(3, 0),
-                                 (0, 3),
-                                 (0, 0),
-                                 (0, 0),
-                                 (0, 0),
-                                 (0, 0),
-                                 (0, 0),
-                                 (0, 0),
-                                 (0, 0),
-                                 (0, 0)]
-
-            self.dec_channels = [0,
-                                 model_complexity * 2,
-                                 model_complexity * 2,
-                                 model_complexity * 2,
-                                 model_complexity * 2,
-                                 model_complexity * 2,
-                                 model_complexity * 2,
-                                 model_complexity * 2,
-                                 model_complexity,
-                                 model_complexity,
-                                 1]
-
-            self.dec_kernel_sizes = [(6, 3), 
-                                     (6, 3),
-                                     (6, 3),
-                                     (6, 4),
-                                     (6, 3),
-                                     (6, 4),
-                                     (8, 5),
-                                     (7, 5),
-                                     (1, 7),
-                                     (7, 1)]
-
-            self.dec_strides = [(2, 1), #
-                                (2, 2), #
-                                (2, 1), #
-                                (2, 2), #
-                                (2, 1), #
-                                (2, 2), #
-                                (2, 1), #
-                                (2, 2), #
-                                (1, 1),
-                                (1, 1)]
-
-            self.dec_paddings = [(0, 0),
-                                 (0, 0),
-                                 (0, 0),
-                                 (0, 0),
-                                 (0, 0),
-                                 (0, 0),
-                                 (0, 0),
-                                 (0, 0),
-                                 (0, 3),
-                                 (3, 0)]
-            
-            self.dec_output_padding = [(0,0),
-                                       (0,0),
-                                       (0,0),
-                                       (0,0),
-                                       (0,0),
-                                       (0,0),
-                                       (0,0),
-                                       (0,0),
-                                       (0,0),
-                                       (0,0)]
-        else:
-            raise ValueError("Unknown model depth : {}".format(model_depth))
 
 # + [markdown] colab_type="text" id="G6bIE9iOj8pq"
 # ## Training New Model ##
@@ -845,9 +469,15 @@ class DCUnet20(nn.Module):
 gc.collect()
 torch.cuda.empty_cache()
 
-dcunet20 = DCUnet20(N_FFT, HOP_LENGTH).to(DEVICE)
+dcunet20 = model_dcu20.DCUnet20(complex=complex).to(DEVICE)
 optimizer = torch.optim.Adam(dcunet20.parameters())
-loss_fn = wsdr_fn
+
+istft_func = None
+if complex:
+    istft_func = istft_complex
+else:
+    istft_func = istft_magnitude
+loss_fn = lambda a,b,c : wsdr_fn(istft_func, a, b, c)
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.1)
 
 # +

@@ -1,4 +1,7 @@
 import torch
+import torchaudio
+
+import numpy as np
 
 # + colab={} colab_type="code" id="cZ0wb9EN5i9f"
 class SpeechDataset:
@@ -12,6 +15,7 @@ class SpeechDataset:
 
         self.noisy_files = sorted(noisy_files)
         self.clean_files = sorted(clean_files)
+        self.sample_rate = 48000
         
         # stft parameters
         self.n_fft = n_fft
@@ -22,17 +26,20 @@ class SpeechDataset:
         # fixed len
         self.max_len = 165000
 
-    
+    def continue_init(self, sample_frames):
+        self.max_len = sample_frames
+
     def __len__(self):
         return self.len_
       
     def load_sample(self, file):
         waveform, _ = torchaudio.load(file)
-        return waveform
+        return torch.squeeze(waveform).numpy()
   
     def __getitem__(self, index):
         # load to tensors and normalization
         x_clean = self.load_sample(self.clean_files[index])
         x_noisy = self.load_sample(self.noisy_files[index])
+
         
         return x_clean, x_noisy

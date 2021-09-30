@@ -5,6 +5,8 @@ from dataset_speech_original import SpeechDataset
 from dataset_audio import *
 from dataset_audio_to_stft import *
 
+from pathlib import Path
+
 class DatasetWrapper(Dataset):
     def __init__(self, data):
         super().__init__()
@@ -17,10 +19,10 @@ class DatasetWrapper(Dataset):
         return self.data.__getitem__(index)
 
 def getDataset(type, options):
-    if type == "original":
+    if type == "madhavmk":
 
-        source_files = sorted(list(options["source_dir"].rglob('*.wav')))
-        target_files = sorted(list(options["target_dir"].rglob('*.wav')))
+        source_files = sorted(list(Path(options["source_dir"]).rglob('*.wav')))
+        target_files = sorted(list(Path(options["target_dir"]).rglob('*.wav')))
 
         return DatasetWrapper (
             AudioToSTFT(
@@ -46,6 +48,7 @@ def getDataset(type, options):
                     options["snr"],
                     override_length=override_length,
                 ),
-                image_size = options["image_size"]
+                image_size = options["image_size"],
+                complex = options["complex"]
             )
         )

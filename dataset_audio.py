@@ -23,7 +23,7 @@ def log_(s):
     pass
 
 class AudioGenerator:
-    def __init__(self, source_dir, verbose=0):
+    def __init__(self, source_dir, verbose=0, randomize=True):
         super().__init__()
 
         audio_suffixes = (".wav", ".mp3", ".mp4", ".m4a", ".flac")
@@ -32,6 +32,7 @@ class AudioGenerator:
         self.verbose = verbose
         self.bin_sample_rate = 48000
         self.sample_rate = 48000
+        self.randomize = randomize
 
         self.paths = util.find_files([source_dir], audio_suffixes, self.verbose)
 
@@ -132,7 +133,8 @@ class AudioGenerator:
                 chunks = [(path_index, i) for i in range((audio_length + n - 1) // n )]
                 picks.extend(chunks)
 
-        random.shuffle(picks)
+        if self.randomize:
+            random.shuffle(picks)
 
         return picks
 
@@ -220,6 +222,6 @@ class AudioGeneratorNoisyAndClean:
         noise = self.noise[index]
 
         source = self.source_noise_model(self.sample_size_frames, clean, noise, self.snr)
-        target = self.source_noise_model(self.sample_size_frames, clean, noise, self.snr)
+        target = self.target_noise_model(self.sample_size_frames, clean, noise, self.snr)
 
         return source, target

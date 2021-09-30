@@ -59,8 +59,9 @@ def additive_noise_model(samples, clean_, noise_, snr):
     return combined
 
 def clean_noise_model(samples, clean_, noise_, snr):
-    zero_padding = np.zeros([samples] - np.shape(clean_), dtype=np.float32)
-    clean = np.concat([np.cast(clean_, np.float32), zero_padding], 0)
+    clean = np.zeros((samples), dtype='float32')
+    clean[0:clean_.shape[0]] = clean_
+    clean_avg_db = average_db(clean)
 
+    clean = np.clip(clean, -1.0, 1.0)
     return clean
-
