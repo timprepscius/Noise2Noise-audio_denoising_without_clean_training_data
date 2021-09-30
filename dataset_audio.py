@@ -165,8 +165,16 @@ class AudioGenerator:
         sample_quantity = sample_end - sample_start
 
         with open(bin_path, "rb") as f:
-            f.seek(sample_start)
+            f.seek(sample_start * 2)
             audio = np.fromfile(f, dtype="int16", count=sample_quantity)
+
+            while audio.shape[0] < self.sample_size_frames:
+                remaining = self.sample_size_frames - audio.shape[0] 
+                size_to_read = min(remaining, audio_length)
+                
+                f.seek(0)
+                more_audio = np.fromfile(f, dtype="int16", count=size_to_read)
+                audio = np.concatenate([audio, more_audio], axis=-1)
 
         # print(audio, sample_start, sample_end)
 

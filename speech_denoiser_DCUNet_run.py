@@ -119,10 +119,15 @@ from scipy import interpolate
 
 PREFIX_DIR = "/Users/tprepscius/Projects/denoise/madhavmk3/Noise2Noise-audio_denoising_without_clean_training_data"
 # PREFIX_DIR = "./"
-model_weights_path = f"{PREFIX_DIR}/transfer/dc20_model_4.pth"
+model_weights_path = f"{PREFIX_DIR}/transfer/dc20_model_9.pth"
 input_path = f"{PREFIX_DIR}/Samples/Sample_Test_Input"
 
-dcunet20 = model_dcu20.DCUnet20().to(DEVICE)
+clean_dir = f"{PREFIX_DIR}/Datasets/clean"
+noise_dir = f"{PREFIX_DIR}/Datasets/noise"
+
+complex = False
+
+dcunet20 = model_dcu20.DCUnet20(complex).to(DEVICE)
 optimizer = torch.optim.Adam(dcunet20.parameters())
 
 checkpoint = torch.load(
@@ -135,41 +140,84 @@ dcunet20.load_state_dict(checkpoint)
 # #### Enter the index of the file in the Test Set folder to Denoise and evaluate metrics waveforms (Indexing starts from 0) ####
 
 dataset = datasets.getDataset("tjp-0", { 
-    "clean_dir": input_path, 
-    "noise_dir": input_path, 
+    "clean_dir": clean_dir, 
+    "noise_dir": noise_dir, 
     "image_size": (215, 2049),
-    "source_noise_model": dataset_noise_models.clean_noise_model,
+    "source_noise_model": dataset_noise_models.additive_noise_model,
     "target_noise_model": dataset_noise_models.clean_noise_model,
-    "snr": (0.5, 1.5)
+    "snr": (-20, 10.0),
+    "complex": complex,
+    "randomize": False
     # "override_length": 2
 });
 
-loader = DataLoader(dataset, batch_size=1, shuffle=True)
+loader = DataLoader(dataset, batch_size=1, shuffle=False)
 
 # +
 dcunet20.eval()
 
 sounds = []
+noise_cleans = []
+
+def to_sound(magnitude, phase):
+    sounded = dataset.data.istft_using_phase(
+        magnitude, 
+        torch.from_numpy(phase)
+    )
+    return sounded[0].view(-1).detach().cpu().numpy()
+
 
 total = len(loader)
 saveIncremental = True
-for i, (source, _) in enumerate(loader):
-    # source_ = source.cuda()
-    stft = dcunet20(source)
-    sound = dataset.data.istft(stft)
-    sound = sound[0].view(-1).detach().cpu().numpy()
-    sounds.append(sound)
+for i, (source, target) in enumerate(dataset):
+    phase = dataset.data.source_phase_for(i)
 
-    print(f"[{i}/{total}] sound.min_max {np.min(sound)} {np.max(sound)}\r")
+    # source_ = source.cuda()
+    source_ = torch.unsqueeze(source, 0)
+
+    stft = dcunet20(source_)
+    output = to_sound(stft, phase)
+    sounds.append(output)
+
+    noise_cleans.append(to_sound(source, phase))
+    noise_cleans.append(output)
+
+    print(f"[{i}/{total}] sound.min_max {np.min(output)} {np.max(output)}\r")
 
     if saveIncremental:
         sound = np.concatenate(sounds)
+        noise_clean = np.concatenate(noise_cleans)
 
         noise_addition_utils.save_audio_file(
             np_array=sound,file_path=Path(f"{PREFIX_DIR}/Samples/output.wav"), 
             sample_rate=SAMPLE_RATE, 
             bit_precision=16
         )
+
+        noise_addition_utils.save_audio_file(
+            np_array=noise_clean,file_path=Path(f"{PREFIX_DIR}/Samples/noise_clean.wav"), 
+            sample_rate=SAMPLE_RATE, 
+            bit_precision=16
+        )
+
+        noise_addition_utils.save_audio_file(
+            np_array=output,file_path=Path(f"{PREFIX_DIR}/Samples/output-{i}.wav"), 
+            sample_rate=SAMPLE_RATE, 
+            bit_precision=16
+        )
+
+        noise_addition_utils.save_audio_file(
+            np_array=to_sound(source, phase),file_path=Path(f"{PREFIX_DIR}/Samples/source-{i}.wav"), 
+            sample_rate=SAMPLE_RATE, 
+            bit_precision=16
+        )
+
+        noise_addition_utils.save_audio_file(
+            np_array=to_sound(target, phase),file_path=Path(f"{PREFIX_DIR}/Samples/target-{i}.wav"), 
+            sample_rate=SAMPLE_RATE, 
+            bit_precision=16
+        )
+
 
 print();
 print("writing");

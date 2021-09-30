@@ -41,8 +41,14 @@ def getDataset(type, options):
         return DatasetWrapper(
             AudioToSTFT(
                 AudioGeneratorNoisyAndClean(
-                    AudioGenerator(options["clean_dir"]),
-                    AudioGenerator(options["noise_dir"]),
+                    AudioGenerator(
+                        options["clean_dir"],
+                        randomize=options["randomize"],
+                    ),
+                    AudioGenerator(
+                        options["noise_dir"],
+                        randomize=options["randomize"],
+                    ),
                     options["source_noise_model"],
                     options["target_noise_model"],
                     options["snr"],

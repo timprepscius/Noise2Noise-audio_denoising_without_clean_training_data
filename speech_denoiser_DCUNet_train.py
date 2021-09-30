@@ -76,7 +76,7 @@ now = datetime.now()
 date_string = now.strftime("%Y%m%d_%H%M%S")
 
 import os
-output_path = f"output/{date_string}"
+output_path = f"output/"
 os.makedirs(output_path,exist_ok=True)
 
 import sys
@@ -180,9 +180,10 @@ test_dataset = datasets.getDataset("tjp-0", {
     "fft_window": N_FFT, "fft_step": HOP_LENGTH,
     "source_noise_model": dataset_noise_models.additive_noise_model,
     "target_noise_model": dataset_noise_models.clean_noise_model,
-    "snr": (0.5, 1.5),
-    "override_length": 8*16,
-    "complex": complex
+    "snr": (-20.0, 10.0),
+    "override_length": 32,
+    "complex": complex,
+    "randomize": True,
 });
 
 train_dataset = datasets.getDataset("tjp-0", { 
@@ -191,18 +192,15 @@ train_dataset = datasets.getDataset("tjp-0", {
     "image_size": (215, 2049),
     "source_noise_model": dataset_noise_models.additive_noise_model,
     "target_noise_model": dataset_noise_models.clean_noise_model,
-    "snr": (0.5, 1.5),
+    "snr": (-20.0, 10.0),
     "complex": complex,
+    "randomize": True,
     # "override_length": 2,
     # "override_length": 32
 });
 
 test_loader = DataLoader(test_dataset, batch_size=1, shuffle=True)
 train_loader = DataLoader(train_dataset, batch_size=2, shuffle=True)
-
-# For testing purpose
-test_loader_single_unshuffled = DataLoader(test_dataset, batch_size=1, shuffle=False)
-
 
 # + [markdown] colab_type="text" id="3G5CqR3-COT8"
 # ### Loss function ###
@@ -330,7 +328,6 @@ def getMetricsonLoader(istft_fn, loader, net):
         results[k] = temp
         
     print("Averages computed")
-    print("Metrics on test data",addon)
     print(results)
 
     return results
@@ -433,7 +430,7 @@ def train(net, train_loader, test_loader, loss_fn, istft_fn, optimizer, schedule
             #test_losses.append(test_loss)
             #print("Loss before training:{:.6f}".format(test_loss))
         
-            with open(output_path + "/results.txt","w+") as f:
+            with open(output_path + f"/{date_string}_results.txt","w+") as f:
                 f.write("Initial : \n")
                 f.write(str(testmet))
                 f.write("\n")
@@ -452,14 +449,14 @@ def train(net, train_loader, test_loader, loss_fn, istft_fn, optimizer, schedule
         
         #print("skipping testing cuz peak autism idk")
         
-        with open(output_path + "/results.txt","a") as f:
+        with open(output_path + f"/{date_string}_results.txt","a") as f:
             f.write("Epoch :"+str(e+1) + "\n" + str(testmet))
             f.write("\n")
         
         print("OPed to txt")
         
-        torch.save(net.state_dict(), output_path +'/dc20_model_'+str(e+1)+'.pth')
-        torch.save(optimizer.state_dict(), output_path +'/dc20_opt_'+str(e+1)+'.pth')
+        torch.save(net.state_dict(), output_path +f"/{date_string}_dc20_model_"+str(e+1)+'.pth')
+        torch.save(optimizer.state_dict(), output_path +f"/{date_string}_dc20_opt_"+str(e+1)+'.pth')
         
         print("Models saved")
 

@@ -1,0 +1,11 @@
+timestamp="$(date +%Y%m%d_%H%M%S)"
+
+source_filename=${timestamp}_source.tar.gz
+log_filename=${timestamp}_train.log
+
+mkdir -p output
+tar czvf output/$source_filename *.py
+rm current_log
+ln -s output/$log_filename current_log
+
+python speech_denoiser_DCUNet_train.py | tee output/$log_filename 2>&1

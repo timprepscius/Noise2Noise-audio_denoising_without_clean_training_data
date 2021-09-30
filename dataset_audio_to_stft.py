@@ -22,7 +22,6 @@ class AudioToSTFT:
 
         result = result.numpy()
 
-
         magnitude = np.expand_dims(np.abs(result), axis=-1)
         phase = np.expand_dims(np.angle(result), axis=-1)
 
@@ -33,6 +32,10 @@ class AudioToSTFT:
     def istft_torch(self, data):
         log_(f"stft data shape {data.shape}")
 
+        if not self.complex:
+            data = torch.unsqueeze(data, axis=-1)
+            data = torch.cat([data, torch.zeros_like(data)], -1)
+
         result = torch.istft(
             input=data, 
             n_fft=self.fft_window_size, 
@@ -40,7 +43,21 @@ class AudioToSTFT:
             normalized=True
         )
 
-        return result.numpy()
+        return result
+
+    def istft_using_phase(self, magnitude, phase):
+        log_(f"stft magnitude shape {magnitude.shape}")
+
+        stft = magnitude * np.exp(1j * phase)
+
+        result = torch.istft(
+            input=stft, 
+            n_fft=self.fft_window_size, 
+            hop_length=self.fft_window_step, 
+            normalized=True
+        )
+
+        return result
 
     def stft_scipy(self, data):
         # https://docs.scipy.org/doc/scipy/reference/generated/scipy.signal.stft.html
@@ -128,6 +145,16 @@ class AudioToSTFT:
         
         return torch.from_numpy(source_stft), torch.from_numpy(target_stft)
         
+    def source_phase_for(self, index):
+        source_, target_ = self.generator.__getitem__(index)
+
+        # padding/cutting
+        source = self._prepare_sample(source_)
+        source_stft, source_phase = self.stft(source)
+
+        source_phase = np.squeeze(source_phase, axis=-1)
+        return source_phase
+
     def _prepare_sample(self, waveform):
         length = self.sample_size_frames
         current_length = min(waveform.shape[0], length)

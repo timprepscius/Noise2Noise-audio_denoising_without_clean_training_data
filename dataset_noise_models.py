@@ -7,7 +7,8 @@ default_fft_window_step = (default_sample_rate * 16) // 1000
 default_image_size = (64, 384)
 default_sample_size_frames = default_fft_window_size + (default_fft_window_step * (default_image_size[0] - 1))
 
-def log_(s):
+def log_(*args):
+    # print(*args)
     pass
 
 def db_to_float(db, using_amplitude=True):
@@ -38,6 +39,7 @@ def additive_noise_model(samples, clean_, noise_, snr):
 
     if snr is not None:
         snr_ = random.uniform(snr[0], snr[1])
+        log_(f"snr_ {snr_}")
 
         added_noise_avg_db = clean_avg_db + snr_
         db_change = added_noise_avg_db - noise_avg_db
@@ -51,6 +53,14 @@ def additive_noise_model(samples, clean_, noise_, snr):
         noise = noise_add
 
     combined = clean + noise
+
+    combined_avg_db = average_db(combined)
+    log_(f"combined_avg_db {combined_avg_db}")
+
+    # combined = combined * db_to_float(clean_avg_db - combined_avg_db)
+    # adjusted_combined_avg_db = average_db(combined)
+    # log_(f"adjusted_combined_avg_db {adjusted_combined_avg_db}")
+
     combined = np.clip(combined, -1.0, 1.0)
 
     combined_avg_db = average_db(combined)
