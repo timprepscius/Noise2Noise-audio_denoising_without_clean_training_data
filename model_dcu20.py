@@ -2,6 +2,10 @@
 import torch
 import torch.nn as nn
 
+def log_(*args):
+    # print(*args)
+    pass
+
 class CConv2d(nn.Module):
     """
     Class of complex valued convolutional layer
@@ -242,27 +246,27 @@ class DCUnet20(nn.Module):
        
         
     def forward(self, x):
-        print('x : ', x.shape)
+        log_('x : ', x.shape)
         orig_x = x
         xs = []
         for i, encoder in enumerate(self.encoders):
             xs.append(x)
             x = encoder(x)
-            print('Encoder : ', x.shape)
+            log_('Encoder : ', x.shape)
             
         p = x
         for i, decoder in enumerate(self.decoders):
             p = decoder(p)
             if i == self.model_length - 1:
                 break
-            print('Decoder : ', p.shape)
+            log_('Decoder : ', p.shape)
             p = torch.cat([p, xs[self.model_length - 1 - i]], dim=1)
         
         # u9 - the mask
         
         mask = p
         
-        print('mask : ', mask.shape)
+        log_('mask : ', mask.shape)
         
         output = mask * orig_x
         output = torch.squeeze(output, 1)

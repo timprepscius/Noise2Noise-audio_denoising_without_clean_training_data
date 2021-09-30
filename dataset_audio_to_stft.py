@@ -3,8 +3,9 @@ import numpy as np
 
 # + colab={} colab_type="code" id="cZ0wb9EN5i9f"
 
-def log_(s):
-    print(s)
+def log_(*args):
+    # print(*args)
+    pass
 
 class AudioToSTFT:
 
