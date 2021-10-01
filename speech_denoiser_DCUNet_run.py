@@ -116,14 +116,22 @@ HOP_LENGTH = (SAMPLE_RATE * 16) // 1000
 # + colab={} colab_type="code" id="J71ny6expQeW"
 from pesq import pesq
 from scipy import interpolate
+import os
 
 PREFIX_DIR = "/Users/tprepscius/Projects/denoise/madhavmk3/Noise2Noise-audio_denoising_without_clean_training_data"
 # PREFIX_DIR = "./"
-model_weights_path = f"{PREFIX_DIR}/transfer/dc20_model_9.pth"
+model_weights_path = f"{PREFIX_DIR}/transfer/out/20210930_185816_dc20_model_18.pth"
 input_path = f"{PREFIX_DIR}/Samples/Sample_Test_Input"
 
 clean_dir = f"{PREFIX_DIR}/Datasets/clean"
 noise_dir = f"{PREFIX_DIR}/Datasets/noise"
+
+model_weights_path_no_ext = os.path.splitext(model_weights_path)[0]
+output_dir = f"{model_weights_path_no_ext}_samples/"
+
+print(f"using {model_weights_path}\n\twith clean {clean_dir}\n\t noise {noise_dir}")
+print(f"\twriting to {output_dir}")
+os.makedirs(output_dir, exist_ok=True)
 
 complex = False
 
@@ -189,31 +197,31 @@ for i, (source, target) in enumerate(dataset):
         noise_clean = np.concatenate(noise_cleans)
 
         noise_addition_utils.save_audio_file(
-            np_array=sound,file_path=Path(f"{PREFIX_DIR}/Samples/output.wav"), 
+            np_array=sound,file_path=Path(f"{output_dir}/output.wav"), 
             sample_rate=SAMPLE_RATE, 
             bit_precision=16
         )
 
         noise_addition_utils.save_audio_file(
-            np_array=noise_clean,file_path=Path(f"{PREFIX_DIR}/Samples/noise_clean.wav"), 
+            np_array=noise_clean,file_path=Path(f"{output_dir}/noise_clean.wav"), 
             sample_rate=SAMPLE_RATE, 
             bit_precision=16
         )
 
         noise_addition_utils.save_audio_file(
-            np_array=output,file_path=Path(f"{PREFIX_DIR}/Samples/output-{i}.wav"), 
+            np_array=output,file_path=Path(f"{output_dir}/output-{i}.wav"), 
             sample_rate=SAMPLE_RATE, 
             bit_precision=16
         )
 
         noise_addition_utils.save_audio_file(
-            np_array=to_sound(source, phase),file_path=Path(f"{PREFIX_DIR}/Samples/source-{i}.wav"), 
+            np_array=to_sound(source, phase),file_path=Path(f"{output_dir}/source-{i}.wav"), 
             sample_rate=SAMPLE_RATE, 
             bit_precision=16
         )
 
         noise_addition_utils.save_audio_file(
-            np_array=to_sound(target, phase),file_path=Path(f"{PREFIX_DIR}/Samples/target-{i}.wav"), 
+            np_array=to_sound(target, phase),file_path=Path(f"{output_dir}/target-{i}.wav"), 
             sample_rate=SAMPLE_RATE, 
             bit_precision=16
         )
@@ -225,7 +233,7 @@ print("writing");
 sound = np.concatenate(sounds)
 
 noise_addition_utils.save_audio_file(
-    np_array=sound,file_path=Path(f"{PREFIX_DIR}/Samples/output.wav"), 
+    np_array=sound,file_path=Path(f"{output_dir}/output.wav"), 
     sample_rate=SAMPLE_RATE, 
     bit_precision=16
 )
