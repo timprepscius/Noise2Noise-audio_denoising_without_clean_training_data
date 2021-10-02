@@ -58,6 +58,7 @@ import torch
 import torch.nn as nn
 import torchaudio
 from torch.utils.data import Dataset, DataLoader
+import torch.onnx as torch_onnx
 
 import datasets
 import dataset_noise_models
@@ -120,7 +121,7 @@ import os
 
 PREFIX_DIR = "/Users/tprepscius/Projects/denoise/madhavmk3/Noise2Noise-audio_denoising_without_clean_training_data"
 # PREFIX_DIR = "./"
-model_weights_path = f"{PREFIX_DIR}/transfer/out/20210930_185816_dc20_model_18.pth"
+model_weights_path = f"{PREFIX_DIR}/transfer/out/20210930_185816_dc20_model_55.pth"
 input_path = f"{PREFIX_DIR}/Samples/Sample_Test_Input"
 
 clean_dir = f"{PREFIX_DIR}/Datasets/clean"
@@ -163,6 +164,18 @@ loader = DataLoader(dataset, batch_size=1, shuffle=False)
 
 # +
 dcunet20.eval()
+
+
+dummy_input, _ = dataset[0]
+model_onnx_path = f"{model_weights_path_no_ext}.onnx"
+dummy_input = torch.unsqueeze(dummy_input, 0)
+
+torch_onnx_export_output = torch_onnx.export(dcunet20, 
+                          dummy_input, 
+                          model_onnx_path, 
+                          verbose=True)
+print(torch_onnx_export_output)
+
 
 sounds = []
 noise_cleans = []
