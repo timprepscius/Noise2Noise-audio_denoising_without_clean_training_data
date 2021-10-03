@@ -55,6 +55,5 @@ def getDataset(type, options):
                     override_length=override_length,
                 ),
                 image_size = options["image_size"],
-                complex = options["complex"]
             )
         )

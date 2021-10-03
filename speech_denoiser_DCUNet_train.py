@@ -43,34 +43,6 @@ training_type =  "Noise2Noise"
 
 # +
 from pathlib import Path
-
-if noise_class == "white": 
-    TRAIN_INPUT_DIR = Path('Datasets/WhiteNoise_Train_Input')
-
-    if training_type == "Noise2Noise":
-        TRAIN_TARGET_DIR = Path('Datasets/WhiteNoise_Train_Output')
-    elif training_type == "Noise2Clean":
-        TRAIN_TARGET_DIR = Path('Datasets/clean_trainset_28spk_wav')
-    else:
-        raise Exception("Enter valid training type")
-
-    TEST_NOISY_DIR = Path('Datasets/WhiteNoise_Test_Input')
-    TEST_CLEAN_DIR = Path('Datasets/clean_testset_wav') 
-    
-else:
-    TRAIN_INPUT_DIR = Path('Datasets/US_Class'+str(noise_class)+'_Train_Input')
-
-    if training_type == "Noise2Noise":
-        TRAIN_TARGET_DIR = Path('Datasets/US_Class'+str(noise_class)+'_Train_Output')
-    elif training_type == "Noise2Clean":
-        TRAIN_TARGET_DIR = Path('Datasets/clean_trainset_28spk_wav')
-    else:
-        raise Exception("Enter valid training type")
-
-    TEST_NOISY_DIR = Path('Datasets/US_Class'+str(noise_class)+'_Test_Input')
-    TEST_CLEAN_DIR = Path('Datasets/clean_testset_wav') 
-# -
-
 from datetime import datetime
 now = datetime.now()
 date_string = now.strftime("%Y%m%d_%H%M%S")
@@ -80,8 +52,6 @@ output_path = f"output/"
 os.makedirs(output_path,exist_ok=True)
 
 import sys
-
-# + colab={} colab_type="code" id="D0bWtt2J5i9F"
 import time
 import pickle
 import warnings
@@ -102,24 +72,20 @@ import datasets
 import dataset_noise_models
 import model_dcu20
 
+from stft import STFT
+
 from tqdm import tqdm, tqdm_notebook
 from torch.utils.data import Dataset, DataLoader
 from matplotlib import colors, pyplot as plt
 from pypesq import pesq
 from IPython.display import clear_output
 
-
 def log_(*args):
     # print(*args)
     pass
 
-# %matplotlib inline
-
-# not everything is smooth in sklearn, to conveniently output images in colab
-# we will ignore warnings
 warnings.filterwarnings(action='ignore', category=DeprecationWarning)
 
-# +
 np.random.seed(999)
 torch.manual_seed(999)
 
@@ -151,14 +117,6 @@ DEVICE = torch.device('cuda' if train_on_gpu else 'cpu')
 torchaudio.set_audio_backend("soundfile")
 print("TorchAudio backend used:\t{}".format(torchaudio.get_audio_backend()))
 
-# + [markdown] colab_type="text" id="IWvlIABzCOTM"
-# ### The sampling frequency and the selected values for the Short-time Fourier transform. ###
-
-# + colab={} colab_type="code" id="8ngFJtPj5i9V"
-SAMPLE_RATE = 48000
-N_FFT = (SAMPLE_RATE * 64) // 1000 
-HOP_LENGTH = (SAMPLE_RATE * 16) // 1000 
-
 
 # + [markdown] colab_type="text" id="x8suREWkb5Se"
 # ### The declaration of datasets and dataloaders ###
@@ -166,46 +124,7 @@ HOP_LENGTH = (SAMPLE_RATE * 16) // 1000
 # test_dataset = datasets.getDataset("speech", { "source_dir": TRAIN_INPUT_DIR, "target_dir": TRAIN_TARGET_DIR, "fft_window": N_FFT, "fft_step": HOP_LENGTH });
 # train_dataset = datasets.getDataset("speech", { "source_dir": TEST_NOISY_DIR, "target_dir": TEST_CLEAN_DIR, "fft_window": N_FFT, "fft_step": HOP_LENGTH });
 
-# PREFIX_DIR = "/Users/tprepscius/Projects/denoise/madhavmk3/Noise2Noise-audio_denoising_without_clean_training_data"
-PREFIX_DIR = "./"
-CLEAN_INPUT_DIR = f"{PREFIX_DIR}/Datasets/clean"
-NOISE_INPUT_DIR = f"{PREFIX_DIR}/Datasets/noise"
 
-complex = False
-
-test_dataset = datasets.getDataset("tjp-0", { 
-    "clean_dir": CLEAN_INPUT_DIR, 
-    "noise_dir": NOISE_INPUT_DIR, 
-    "image_size": (215, 2049),
-    "fft_window": N_FFT, "fft_step": HOP_LENGTH,
-    "source_noise_model": dataset_noise_models.additive_noise_model,
-    "target_noise_model": dataset_noise_models.clean_noise_model,
-    "snr": (-20.0, 10.0),
-    "override_length": 32,
-    "complex": complex,
-    "randomize": True,
-});
-
-train_dataset = datasets.getDataset("tjp-0", { 
-    "clean_dir": CLEAN_INPUT_DIR, 
-    "noise_dir": NOISE_INPUT_DIR, 
-    "image_size": (215, 2049),
-    "source_noise_model": dataset_noise_models.additive_noise_model,
-    "target_noise_model": dataset_noise_models.clean_noise_model,
-    "snr": (-20.0, 10.0),
-    "complex": complex,
-    "randomize": True,
-    # "override_length": 2,
-    # "override_length": 32
-});
-
-test_loader = DataLoader(test_dataset, batch_size=1, shuffle=True)
-train_loader = DataLoader(train_dataset, batch_size=2, shuffle=True)
-
-# + [markdown] colab_type="text" id="3G5CqR3-COT8"
-# ### Loss function ###
-
-# + colab={} colab_type="code" id="J71ny6expQeW"
 from pesq import pesq
 from scipy import interpolate
 
@@ -220,45 +139,10 @@ def resample(original, old_rate, new_rate):
     else:
         return original
 
-def istft_complex(v):
-    v = torch.squeeze(v, 1)
-    v = torch.istft(v, n_fft=N_FFT, hop_length=HOP_LENGTH, normalized=True)
-    return v
-
-def istft_magnitude(v):
-    v = torch.unsqueeze(v, -1)
-    i = torch.zeros_like(v)
-    w = torch.cat([v, i], axis=-1)
-    return istft_complex(w)
-
-istft_fn = None
-if complex:
-    istft_fn = istft_complex
-else:
-    istft_fn = istft_magnitude
-
-def wsdr_fn(istft_func, x_, y_pred_, y_true_, eps=1e-8):
-    # to time-domain waveform
-    log_(f"y_true_.shape {y_true_.shape}")
-    # y_true_ = torch.squeeze(y_true_, 1)
-    # y_true = torch.istft(y_true_, n_fft=N_FFT, hop_length=HOP_LENGTH, normalized=True)
-    y_true = istft_func(y_true_)
-
-    log_(f"x_.shape {x_.shape}")
-    # x_ = torch.squeeze(x_, 1)
-    # x = torch.istft(x_, n_fft=N_FFT, hop_length=HOP_LENGTH, normalized=True)
-    x = istft_func(x_)
-
-    log_(f"y_pred_.shape {y_pred_.shape}")
-    # y_pred_ = torch.squeeze(y_pred_, 1)
-    # y_pred = torch.istft(y_pred_, n_fft=N_FFT, hop_length=HOP_LENGTH, normalized=True)
-    y_pred = istft_func(y_pred_)
-
-
+def wsdr_fn(x, y_pred, y_true, eps=1e-8):
     y_pred = y_pred.flatten(1)
     y_true = y_true.flatten(1)
     x = x.flatten(1)
-
 
     def sdr_fn(true, pred, eps=1e-8):
         num = torch.sum(true * pred, dim=1)
@@ -273,19 +157,44 @@ def wsdr_fn(istft_func, x_, y_pred_, y_true_, eps=1e-8):
     wSDR = a * sdr_fn(y_true, y_pred) + (1 - a) * sdr_fn(z_true, z_pred)
     return torch.mean(wSDR)
 
-def getMetricsonLoader(istft_fn, loader, net):
+def preprocess(x, y):
+    log_(f"preprocess x.shape {x.shape}, y.shape {y.shape}")
+    x_, y_ = stft.to_magnitude(x), stft.to_magnitude(y)
+    return x_, y_
+
+def postprocess(x, y, z):
+    log_(f"postprocess x.shape {x.shape}, y.shape {y.shape}, z.shape {z.shape}")
+
+    x = torch.squeeze(x, axis=1)
+    x_ = stft.inverse(x)
+
+    y = torch.squeeze(y, axis=1)
+    y_ = stft.inverse(y)
+
+    z_ = stft.inverse(stft.to_complex(z, stft.to_phase(x)))
+
+    return x_, y_, z_
+
+def getMetricsonLoader(stft, loader, net):
     net.eval()
     # Original test metrics
     scale_factor = 32768
     metric_names = {}
     overall_metrics = {}
     total = len(loader)
-    for i, data in enumerate(loader):
-        noisy = data[0]
-        clean = data[1]
+    for i, (x_, y_) in enumerate(loader):
+        x_, y_ = x_.to(DEVICE), y_.to(DEVICE)
+        x, y = preprocess(x_, y_)
 
-        x_est_np = istft_fn(noisy).view(-1).detach().cpu().numpy()
-        x_clean_np = istft_fn(clean).view(-1).detach().cpu().numpy()
+        # get the output from the model
+        predicted = net(x)
+
+        # calculate loss
+
+        x__, y__, predicted__ = postprocess(x_, y_, predicted)
+
+        x_est_np = predicted__.view(-1).detach().cpu().numpy()
+        x_clean_np = y__.view(-1).detach().cpu().numpy()
             
         metrics = AudioMetrics2(x_clean_np, x_est_np, 48000)
         
@@ -333,39 +242,39 @@ def getMetricsonLoader(istft_fn, loader, net):
     return results
 
 
-# + [markdown] colab_type="text" id="kYvWz_6jRZ3e"
-# ### Description of the training of epochs. ###
-
-# + colab={} colab_type="code" id="VukJTCGIZ8ZU"
-def train_epoch(net, train_loader, loss_fn, istft_fn, optimizer):
+def train_epoch(net, train_loader, loss_fn, stft, optimizer):
     net.train()
     train_ep_loss = 0.
-    counter = 0
     total = len(train_loader)
+    # loss_fn = nn.MSELoss()
 
-    for noisy_x, clean_x in train_loader:
+    for i, (x_, y_) in enumerate(train_loader):
 
-        noisy_x, clean_x = noisy_x.to(DEVICE), clean_x.to(DEVICE)
+        x_, y_ = x_.to(DEVICE), y_.to(DEVICE)
+        x, y = preprocess(x_, y_)
 
         # zero  gradients
         net.zero_grad()
 
         # get the output from the model
-        pred_x = net(noisy_x)
+        predicted = net(x)
 
         # calculate loss
-        loss = loss_fn(istft_fn, noisy_x, pred_x, clean_x)
+
+        x__, y__, predicted__ = postprocess(x_, y_, predicted)
+
+        # loss = loss_fn(istft_fn, noisy_x, pred_x, clean_x)
+        loss = loss_fn(x__, predicted__, y__)
         loss.backward()
         optimizer.step()
 
         train_ep_loss += loss.item() 
-        counter += 1
 
         sys.stdout.write('\r')
-        sys.stdout.write(f"[{counter}/{total}]")
+        sys.stdout.write(f"[{i}/{total}]")
         sys.stdout.flush()
 
-    train_ep_loss /= counter
+    train_ep_loss /= total
 
     # clear cache
     gc.collect()
@@ -373,15 +282,11 @@ def train_epoch(net, train_loader, loss_fn, istft_fn, optimizer):
     return train_ep_loss
 
 
-# + [markdown] colab_type="text" id="zYCJWaTMRgS3"
-# ### Description of the validation of epochs ###
-
-# + colab={} colab_type="code" id="-JKrTMpPhw19"
-def test_epoch(net, test_loader, loss_fn, istft_fn):
+def test_epoch(net, test_loader, loss_fn, stft):
     net.eval()
     test_ep_loss = 0.
-    counter = 0.
     '''
+    total = len(test_loader)
     for noisy_x, clean_x in test_loader:
         # get the output from the model
         noisy_x, clean_x = noisy_x.to(DEVICE), clean_x.to(DEVICE)
@@ -391,58 +296,35 @@ def test_epoch(net, test_loader, loss_fn, istft_fn):
         loss = loss_fn(noisy_x, pred_x, clean_x)
         # Calc the metrics here
         test_ep_loss += loss.item() 
-        
-        counter += 1
 
-    test_ep_loss /= counter
+    test_ep_loss /= total
     '''
     
     #print("Actual compute done...testing now")
-    
-    testmet = getMetricsonLoader(istft_fn, test_loader, net)
+
+    # this doesn't do anything   
+    test_metrics = getMetricsonLoader(stft, test_loader, net)
 
     # clear cache
     gc.collect()
     torch.cuda.empty_cache()
     
-    return test_ep_loss, testmet
+    return test_ep_loss, test_metrics
 
 
-# + [markdown] colab_type="text" id="879vq_uBRm_2"
-# ### To understand whether the network is being trained or not, we will output a train and test loss. ###
-
-# + colab={} colab_type="code" id="I4gdVmhRr1Qi"
-def train(net, train_loader, test_loader, loss_fn, istft_fn, optimizer, scheduler, epochs):
+def train(net, train_loader, test_loader, loss_fn, stft, optimizer, scheduler, epochs):
     
     train_losses = []
     test_losses = []
 
     for e in tqdm(range(epochs)):
-
-        # first evaluating for comparison
-        
-        if e == 0 and training_type=="Noise2Clean":
-            print("Pre-training evaluation")
-            #with torch.no_grad():
-            #    test_loss,testmet = test_epoch(net, test_loader, loss_fn,use_net=False)
-            #print("Had to load model.. checking if deets match")
-            testmet = getMetricsonLoader(istft_fn, test_loader, net, False)    # again, modified cuz im loading
-            #test_losses.append(test_loss)
-            #print("Loss before training:{:.6f}".format(test_loss))
-        
-            with open(output_path + f"/{date_string}_results.txt","w+") as f:
-                f.write("Initial : \n")
-                f.write(str(testmet))
-                f.write("\n")
-        
-         
-        train_loss = train_epoch(net, train_loader, loss_fn, istft_fn, optimizer)
+        train_loss = train_epoch(net, train_loader, loss_fn, stft, optimizer)
         test_loss = 0
         scheduler.step()
         print("Saving model....")
         
         with torch.no_grad():
-            test_loss, testmet = test_epoch(net, test_loader, loss_fn, istft_fn)
+            test_loss, testmet = test_epoch(net, test_loader, loss_fn, stft)
 
         train_losses.append(train_loss)
         test_losses.append(test_loss)
@@ -470,22 +352,64 @@ def train(net, train_loader, test_loader, loss_fn, istft_fn, optimizer, schedule
     return train_loss, test_loss
 
 
-# + [markdown] colab_type="text" id="HO3p2zrOcn_z"
-# ### 20 Layer DCUNet Model ###
 
-# + colab={} colab_type="code" id="j8XCrVIg5i-K"
 
-# + [markdown] colab_type="text" id="G6bIE9iOj8pq"
-# ## Training New Model ##
+# --------------------------------
+# --------------------------------
+# --------------------------------
+# --------------------------------
 
-# + colab={} colab_type="code" id="QyBc1awQkI-D"
-# # clear cache
+
 gc.collect()
 torch.cuda.empty_cache()
 
+# --------------------------------
+# --------------------------------
+# --------------------------------
+# --------------------------------
+
+SAMPLE_RATE = 48000
+N_FFT = (SAMPLE_RATE * 64) // 1000 
+HOP_LENGTH = (SAMPLE_RATE * 16) // 1000 
+
+# PREFIX_DIR = "/Users/tprepscius/Projects/denoise/madhavmk3/Noise2Noise-audio_denoising_without_clean_training_data"
+PREFIX_DIR = "./"
+CLEAN_INPUT_DIR = f"{PREFIX_DIR}/Datasets/clean"
+NOISE_INPUT_DIR = f"{PREFIX_DIR}/Datasets/noise"
+
+complex = False
+test_dataset = datasets.getDataset("tjp-0", { 
+    "clean_dir": CLEAN_INPUT_DIR, 
+    "noise_dir": NOISE_INPUT_DIR, 
+    "image_size": (215, 2049),
+    "fft_window": N_FFT, "fft_step": HOP_LENGTH,
+    "source_noise_model": dataset_noise_models.additive_noise_model,
+    "target_noise_model": dataset_noise_models.clean_noise_model,
+    "snr": (-20.0, 10.0),
+    "override_length": 32,
+    # "override_length": 2,
+    "randomize": True,
+});
+
+train_dataset = datasets.getDataset("tjp-0", { 
+    "clean_dir": CLEAN_INPUT_DIR, 
+    "noise_dir": NOISE_INPUT_DIR, 
+    "image_size": (215, 2049),
+    "source_noise_model": dataset_noise_models.additive_noise_model,
+    "target_noise_model": dataset_noise_models.clean_noise_model,
+    "snr": (-20.0, 10.0),
+    "randomize": True,
+    # "override_length": 2,
+    # "override_length": 32
+});
+
+stft = train_dataset.data.stft
+test_loader = DataLoader(test_dataset, batch_size=1, shuffle=True)
+train_loader = DataLoader(train_dataset, batch_size=2, shuffle=True)
+
+
 dcunet20 = model_dcu20.DCUnet20(complex=complex).to(DEVICE)
 optimizer = torch.optim.Adam(dcunet20.parameters())
-
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.1)
 
 # +
@@ -503,7 +427,7 @@ print(f"using input shape: {train_dataset[0][0].shape}")
 # + colab={} colab_type="code" id="ppXkJUsY55vI"
 num_epochs = 2048
 loss_fn = wsdr_fn
-train_losses, test_losses = train(dcunet20, train_loader, test_loader, loss_fn, istft_fn, optimizer, scheduler, num_epochs)
+train_losses, test_losses = train(dcunet20, train_loader, test_loader, loss_fn, stft, optimizer, scheduler, num_epochs)
 # -
 
 print("done")
