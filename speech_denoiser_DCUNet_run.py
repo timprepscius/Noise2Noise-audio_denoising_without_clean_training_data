@@ -121,7 +121,7 @@ import os
 
 PREFIX_DIR = "/Users/tprepscius/Projects/denoise/madhavmk3/Noise2Noise-audio_denoising_without_clean_training_data"
 # PREFIX_DIR = "./"
-model_weights_path = f"{PREFIX_DIR}/transfer/out/20211003_103053_dc20_model_1.pth"
+model_weights_path = f"{PREFIX_DIR}/transfer/out/20211003_114518_dc20_model_10.pth"
 input_path = f"{PREFIX_DIR}/Samples/Sample_Test_Input"
 
 clean_dir = f"{PREFIX_DIR}/Datasets/clean"

@@ -23,7 +23,7 @@ def log_(s):
     pass
 
 class AudioGenerator:
-    def __init__(self, source_dir, verbose=0, randomize=True):
+    def __init__(self, source_dir, verbose=0, randomize=True, fill_with_same=True):
         super().__init__()
 
         audio_suffixes = (".wav", ".mp3", ".mp4", ".m4a", ".flac")
@@ -38,6 +38,7 @@ class AudioGenerator:
 
         self.audio_info = {}
         self.cache_audio_info = False
+        self.fill_with_same = fill_with_same
 
         if self.cache_audio_info:
             try:
@@ -169,12 +170,21 @@ class AudioGenerator:
             audio = np.fromfile(f, dtype="int16", count=sample_quantity)
 
             while audio.shape[0] < self.sample_size_frames:
+                fill_path_index = path_index
+
+                if not self.fill_with_same:
+                    fill_path_index = random.randint(0, len(paths)-1)
+
+                fill_path = paths[fill_path_index]
+
+                fill_bin_path, fill_audio_length = self.audio_info[fill_path]
+
                 remaining = self.sample_size_frames - audio.shape[0] 
-                size_to_read = min(remaining, audio_length)
+                size_to_read = min(remaining, fill_audio_length)
                 
-                f.seek(0)
-                more_audio = np.fromfile(f, dtype="int16", count=size_to_read)
-                audio = np.concatenate([audio, more_audio], axis=-1)
+                with open(fill_bin_path, "rb") as h:
+                    more_audio = np.fromfile(h, dtype="int16", count=size_to_read)
+                    audio = np.concatenate([audio, more_audio], axis=-1)
 
         # print(audio, sample_start, sample_end)
 

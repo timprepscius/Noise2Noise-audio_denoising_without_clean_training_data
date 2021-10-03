@@ -405,7 +405,7 @@ train_dataset = datasets.getDataset("tjp-0", {
 
 stft = train_dataset.data.stft
 test_loader = DataLoader(test_dataset, batch_size=1, shuffle=True)
-train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
+train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)
 
 
 dcunet20 = model_dcu20.DCUnet20(complex=complex).to(DEVICE)

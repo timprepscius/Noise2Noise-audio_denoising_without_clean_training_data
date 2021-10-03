@@ -44,10 +44,12 @@ def getDataset(type, options):
                     AudioGenerator(
                         options["clean_dir"],
                         randomize=options["randomize"],
+                        fill_with_same=False,
                     ),
                     AudioGenerator(
                         options["noise_dir"],
                         randomize=options["randomize"],
+                        fill_with_same=True,
                     ),
                     options["source_noise_model"],
                     options["target_noise_model"],
