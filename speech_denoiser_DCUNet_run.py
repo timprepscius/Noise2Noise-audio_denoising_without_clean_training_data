@@ -121,7 +121,7 @@ import os
 
 PREFIX_DIR = "/Users/tprepscius/Projects/denoise/madhavmk3/Noise2Noise-audio_denoising_without_clean_training_data"
 # PREFIX_DIR = "./"
-model_weights_path = f"{PREFIX_DIR}/transfer/out/20211002_104240_dc20_model_32.pth"
+model_weights_path = f"{PREFIX_DIR}/transfer/out/20211003_103053_dc20_model_1.pth"
 input_path = f"{PREFIX_DIR}/Samples/Sample_Test_Input"
 
 clean_dir = f"{PREFIX_DIR}/Datasets/clean"
@@ -162,45 +162,41 @@ dataset = datasets.getDataset("tjp-0", {
 
 loader = DataLoader(dataset, batch_size=1, shuffle=False)
 
+stft = dataset.data.stft
+
 # +
 dcunet20.eval()
-
-
-dummy_input, _ = dataset[0]
-model_onnx_path = f"{model_weights_path_no_ext}.onnx"
-dummy_input = torch.unsqueeze(dummy_input, 0)
-
-torch_onnx_export_output = torch_onnx.export(dcunet20, 
-                          dummy_input, 
-                          model_onnx_path, 
-                          verbose=True)
-print(torch_onnx_export_output)
-
 
 sounds = []
 noise_cleans = []
 
-def to_sound(magnitude, phase):
-    sounded = dataset.data.istft_using_phase(
-        magnitude, 
-        torch.from_numpy(phase)
-    )
-    return sounded[0].view(-1).detach().cpu().numpy()
-
+def to_numpy(x):
+    return x.view(-1).detach().cpu().numpy()
 
 total = len(loader)
 saveIncremental = True
-for i, (source, target) in enumerate(dataset):
-    phase = dataset.data.source_phase_for(i)
+for i, (x_, y_) in enumerate(dataset):
+    x_, y_ = x_.to(DEVICE), y_.to(DEVICE)
 
-    # source_ = source.cuda()
-    source_ = torch.unsqueeze(source, 0)
+    x = stft.to_magnitude(x_)
+    phase = stft.to_phase(x_)
 
-    stft = dcunet20(source_)
-    output = to_sound(stft, phase)
+    x = torch.unsqueeze(x, 0)
+
+    if i == 0:
+        model_onnx_path = f"{model_weights_path_no_ext}.onnx"
+        torch_onnx_export_output = torch_onnx.export(dcunet20, 
+                                x, 
+                                model_onnx_path, 
+                                verbose=True)
+
+
+    prediction = dcunet20(x)
+
+    output = to_numpy(stft.inverse(stft.to_complex(prediction, phase)))
     sounds.append(output)
 
-    noise_cleans.append(to_sound(source, phase))
+    noise_cleans.append(to_numpy(stft.inverse(x_)))
     noise_cleans.append(output)
 
     print(f"[{i}/{total}] sound.min_max {np.min(output)} {np.max(output)}\r")
@@ -228,13 +224,13 @@ for i, (source, target) in enumerate(dataset):
         )
 
         noise_addition_utils.save_audio_file(
-            np_array=to_sound(source, phase),file_path=Path(f"{output_dir}/source-{i}.wav"), 
+            np_array=to_numpy(stft.inverse(x_)),file_path=Path(f"{output_dir}/source-{i}.wav"), 
             sample_rate=SAMPLE_RATE, 
             bit_precision=16
         )
 
         noise_addition_utils.save_audio_file(
-            np_array=to_sound(target, phase),file_path=Path(f"{output_dir}/target-{i}.wav"), 
+            np_array=to_numpy(stft.inverse(y_)),file_path=Path(f"{output_dir}/target-{i}.wav"), 
             sample_rate=SAMPLE_RATE, 
             bit_precision=16
         )
